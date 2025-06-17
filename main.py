@@ -10,6 +10,7 @@ from sklearn.tree import DecisionTreeClassifier
 import numpy as np
 from dotenv import load_dotenv
 import logging
+from urllib.parse import urlparse
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -22,15 +23,45 @@ load_dotenv()
 @asynccontextmanager
 async def lifespan(app):
     logger.info("Starting up Smart Event Planner application...")
+
+    # Prefer DATABASE_URL if available
+    database_url = os.getenv("DATABASE_URL")
+    if database_url:
+        logger.info("Using DATABASE_URL for database connection")
+        parsed = urlparse(database_url)
+        db_config = {
+            "user": parsed.username,
+            "password": parsed.password,
+            "database": parsed.path.lstrip('/'),
+            "host": parsed.hostname,
+            "port": parsed.port or 5432
+        }
+    else:
+        # Fallback to individual variables
+        logger.info("Using individual environment variables for database connection")
+        db_config = {
+            "user": os.getenv("PGUSER", os.getenv("DB_USER", "postgres")),
+            "password": os.getenv("PGPASSWORD", os.getenv("DB_PASSWORD", "password")),
+            "database": os.getenv("PGDATABASE", os.getenv("DB_NAME", "event_planner")),
+            "host": os.getenv("PGHOST", os.getenv("DB_HOST", "localhost")),
+            "port": int(os.getenv("PGPORT", os.getenv("DB_PORT", 5432)))
+        }
+
+    logger.info(f"Attempting to connect to database at {db_config['host']}:{db_config['port']}")
+
     # Initialize database pool
-    app.state.db_pool = await asyncpg.create_pool(
-        user=os.getenv("DB_USER", "postgres"),
-        password=os.getenv("DB_PASSWORD", "password"),
-        database=os.getenv("DB_NAME", "event_planner"),
-        host=os.getenv("DB_HOST", "localhost"),
-        port=int(os.getenv("DB_PORT", 5432))
-    )
-    # Create tables if they don't exist
+    try:
+        app.state.db_pool = await asyncpg.create_pool(**db_config)
+    except Exception as e:
+        logger.error(f"Failed to connect to database: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Database connection failed: {str(e)}")
+
+    # Test the connection
+    async with app.state.db_pool.acquire() as conn:
+        await conn.execute("SELECT 1")
+        logger.info("Database connection test successful")
+
+    # Create tables
     async with app.state.db_pool.acquire() as conn:
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS events (
@@ -51,7 +82,7 @@ async def lifespan(app):
         """)
     logger.info("Database initialized successfully.")
     yield
-    # Shutdown: Close the database pool
+    # Shutdown
     await app.state.db_pool.close()
     logger.info("Application shutdown complete.")
 
@@ -116,7 +147,6 @@ async def fetch_weather(location: str, date: str) -> dict:
                 logger.error(f"Failed to fetch weather for {location}: HTTP {response.status}")
                 raise HTTPException(status_code=400, detail="Invalid location or API error")
             data = await response.json()
-            # Match only the date part of dt_txt (e.g., "2025-06-19 12:00:00" -> "2025-06-19")
             forecast = next((item for item in data["list"] if item["dt_txt"].split(" ")[0] == date), None)
             if not forecast:
                 logger.warning(f"No weather data available for {location} on {date}")
@@ -164,7 +194,6 @@ def calculate_suitability(event_type: str, weather: dict) -> tuple[str, str]:
             score += 15
             details.append("Clear skies for aesthetic appeal")
     else:
-        # Generic scoring for other event types
         if 15 <= weather["temperature"] <= 28:
             score += 30
             details.append("Comfortable temperature")
