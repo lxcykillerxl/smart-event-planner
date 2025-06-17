@@ -1,0 +1,320 @@
+{
+	"info": {
+		"_postman_id": "37695cd3-04fe-483d-b31d-3b74dda32d1e",
+		"name": "Smart Event Planner APIs",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "29013045"
+	},
+	"item": [
+		{
+			"name": "Event Management",
+			"item": [
+				{
+					"name": "Create Cricket Tournament",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\"name\": \"Cricket Tournament\", \"location\": \"Mumbai\", \"date\": \"2025-03-16\", \"event_type\": \"cricket\"}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/events",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"events"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Create Wedding",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\"name\": \"Wedding\", \"location\": \"Goa\", \"date\": \"2025-12-10\", \"event_type\": \"wedding\"}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/events",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"events"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Create Hiking Trip",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\"name\": \"Hiking Trip\", \"location\": \"Lonavala\", \"date\": \"2025-10-20\", \"event_type\": \"hiking\"}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/events",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"events"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "List All Events",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/events",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"events"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Update Event Details",
+					"request": {
+						"method": "PUT",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\"name\": \"Updated Cricket Tournament\", \"location\": \"Mumbai\", \"date\": \"2025-03-17\", \"event_type\": \"cricket\"}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/events/1",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"events",
+								"1"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Weather Integration",
+			"item": [
+				{
+					"name": "Get Weather for Mumbai",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/weather/Mumbai/2025-03-16",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"weather",
+								"Mumbai",
+								"2025-03-16"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Check Weather Suitability for Cricket Event",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/events/1/weather-check",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"events",
+								"1",
+								"weather-check"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Alternative Dates",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/events/1/alternatives",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"events",
+								"1",
+								"alternatives"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get AI Suitability",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/events/1/suitability",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"events",
+								"1",
+								"suitability"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Collaborative Planning",
+			"item": [
+				{
+					"name": "Invite User to Event",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/events/1/invite?user_name=Shantanu&preferred_date=2025-03-17",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"events",
+								"1",
+								"invite"
+							],
+							"query": [
+								{
+									"key": "user_name",
+									"value": "Shantanu"
+								},
+								{
+									"key": "preferred_date",
+									"value": "2025-03-17"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Event Votes",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/events/1/votes",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"events",
+								"1",
+								"votes"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Error Handling",
+			"item": [
+				{
+					"name": "Invalid Location",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/weather/InvalidCity/2025-03-16",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"weather",
+								"InvalidCity",
+								"2025-03-16"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Non-existent Event",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/events/999/weather-check",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"events",
+								"999",
+								"weather-check"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "https://your-railway-app-url.com"
+		}
+	]
+}
