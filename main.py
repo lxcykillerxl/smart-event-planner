@@ -24,28 +24,43 @@ load_dotenv()
 async def lifespan(app):
     logger.info("Starting up Smart Event Planner application...")
 
-    # Prefer DATABASE_URL if available
+    # Log all relevant environment variables
+    env_vars = {
+        "DATABASE_URL": os.getenv("DATABASE_URL"),
+        "PGHOST": os.getenv("PGHOST"),
+        "PGPORT": os.getenv("PGPORT"),
+        "PGUSER": os.getenv("PGUSER"),
+        "PGPASSWORD": os.getenv("PGPASSWORD"),
+        "PGDATABASE": os.getenv("PGDATABASE"),
+        "DB_HOST": os.getenv("DB_HOST"),
+        "DB_PORT": os.getenv("DB_PORT"),
+        "DB_USER": os.getenv("DB_USER"),
+        "DB_PASSWORD": os.getenv("DB_PASSWORD"),
+        "DB_NAME": os.getenv("DB_NAME")
+    }
+    logger.info(f"Environment variables: {env_vars}")
+
+    # Require DATABASE_URL
     database_url = os.getenv("DATABASE_URL")
-    if database_url:
-        logger.info("Using DATABASE_URL for database connection")
-        parsed = urlparse(database_url)
-        db_config = {
-            "user": parsed.username,
-            "password": parsed.password,
-            "database": parsed.path.lstrip('/'),
-            "host": parsed.hostname,
-            "port": parsed.port or 5432
-        }
-    else:
-        # Fallback to individual variables
-        logger.info("Using individual environment variables for database connection")
-        db_config = {
-            "user": os.getenv("PGUSER", os.getenv("DB_USER", "postgres")),
-            "password": os.getenv("PGPASSWORD", os.getenv("DB_PASSWORD", "password")),
-            "database": os.getenv("PGDATABASE", os.getenv("DB_NAME", "event_planner")),
-            "host": os.getenv("PGHOST", os.getenv("DB_HOST", "localhost")),
-            "port": int(os.getenv("PGPORT", os.getenv("DB_PORT", 5432)))
-        }
+    if not database_url:
+        error_msg = "DATABASE_URL environment variable is not set. Cannot connect to the database."
+        logger.error(error_msg)
+        raise HTTPException(status_code=500, detail=error_msg)
+
+    logger.info("Using DATABASE_URL for database connection")
+    parsed = urlparse(database_url)
+    db_config = {
+        "user": parsed.username,
+        "password": parsed.password,
+        "database": parsed.path.lstrip('/'),
+        "host": parsed.hostname,
+        "port": parsed.port or 5432
+    }
+
+    # Log the parsed configuration (avoid logging password)
+    safe_db_config = db_config.copy()
+    safe_db_config["password"] = "****"
+    logger.info(f"Parsed database config: {safe_db_config}")
 
     logger.info(f"Attempting to connect to database at {db_config['host']}:{db_config['port']}")
 
