@@ -24,6 +24,7 @@ load_dotenv()
 async def lifespan(app):
     logger.info("Starting up Smart Event Planner application...")
 
+
     # Log all relevant environment variables
     env_vars = {
         "DATABASE_URL": os.getenv("DATABASE_URL"),
@@ -103,6 +104,10 @@ async def lifespan(app):
 
 # Initialize FastAPI app with lifespan
 app = FastAPI(lifespan=lifespan)
+@app.get("/")
+async def root():
+    return {"message": "Smart Event Planner API is running ✅"}
+
 
 # Dependency to get the database pool
 async def get_pool(request: Request):
