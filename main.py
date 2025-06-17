@@ -1,28 +1,66 @@
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, status, Depends, Request
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List
+from contextlib import asynccontextmanager
 import asyncpg
 import aiohttp
 import os
 from datetime import datetime, timedelta, date
-import json
 from sklearn.tree import DecisionTreeClassifier
 import numpy as np
 from dotenv import load_dotenv
+import logging
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Load environment variables
 load_dotenv()
 
-app = FastAPI()
-
-# Database connection pool
-async def get_db_pool():
-    return await asyncpg.create_pool(
+# Lifespan handler for startup and shutdown
+@asynccontextmanager
+async def lifespan(app):
+    logger.info("Starting up Smart Event Planner application...")
+    # Initialize database pool
+    app.state.db_pool = await asyncpg.create_pool(
         user=os.getenv("DB_USER", "postgres"),
         password=os.getenv("DB_PASSWORD", "password"),
         database=os.getenv("DB_NAME", "event_planner"),
         host=os.getenv("DB_HOST", "localhost"),
-        port=os.getenv("DB_PORT", 5432)
+        port=int(os.getenv("DB_PORT", 5432))
     )
+    # Create tables if they don't exist
+    async with app.state.db_pool.acquire() as conn:
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS events (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(100) NOT NULL,
+                location VARCHAR(100) NOT NULL,
+                date DATE NOT NULL,
+                event_type VARCHAR(50) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS event_votes (
+                id SERIAL PRIMARY KEY,
+                event_id INTEGER REFERENCES events(id) ON DELETE CASCADE,
+                user_name VARCHAR(50) NOT NULL,
+                preferred_date DATE NOT NULL,
+                UNIQUE(event_id, user_name)
+            );
+        """)
+    logger.info("Database initialized successfully.")
+    yield
+    # Shutdown: Close the database pool
+    await app.state.db_pool.close()
+    logger.info("Application shutdown complete.")
+
+# Initialize FastAPI app with lifespan
+app = FastAPI(lifespan=lifespan)
+
+# Dependency to get the database pool
+async def get_pool(request: Request):
+    return request.app.state.db_pool
 
 # Pydantic models
 class EventCreate(BaseModel):
@@ -59,48 +97,29 @@ X_train = np.array([[20, 10, 15, 0], [30, 50, 25, 1], [15, 5, 10, 0]])  # [temp,
 y_train = np.array([1, 0, 1])  # 1=Good, 0=Poor
 ml_model = DecisionTreeClassifier().fit(X_train, y_train)
 
-async def init_db():
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS events (
-                id SERIAL PRIMARY KEY,
-                name VARCHAR(100) NOT NULL,
-                location VARCHAR(100) NOT NULL,
-                date DATE NOT NULL,
-                event_type VARCHAR(50) NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-            CREATE TABLE IF NOT EXISTS event_votes (
-                id SERIAL PRIMARY KEY,
-                event_id INTEGER REFERENCES events(id),
-                user_name VARCHAR(50) NOT NULL,
-                preferred_date DATE NOT NULL,
-                UNIQUE(event_id, user_name)  -- Prevent duplicate votes by the same user
-            );
-        """)
-    await pool.close()
-
-@app.on_event("startup")
-async def startup_event():
-    await init_db()
-
 # Weather API integration
 async def fetch_weather(location: str, date: str) -> dict:
     cache_key = f"{location}_{date}"
     if cache_key in weather_cache and (datetime.now() - weather_cache[cache_key]["timestamp"]).seconds < 3*3600:
+        logger.info(f"Returning cached weather data for {location} on {date}")
         return weather_cache[cache_key]["data"]
 
-    api_key = os.getenv("OPENWEATHERMAP_API_KEY", "your_api_key_here")
-    url = f"http://api.openweathermap.org/data/2.5/forecast?q={location}&appid={api_key}&units=metric"
+    api_key = os.getenv("OPENWEATHERMAP_API_KEY")
+    if not api_key or api_key == "your_api_key_here":
+        logger.error("OpenWeatherMap API key is not set or invalid.")
+        raise HTTPException(status_code=500, detail="Weather API key is missing or invalid")
+
+    url = f"https://api.openweathermap.org/data/2.5/forecast?q={location}&appid={api_key}&units=metric"
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as response:
             if response.status != 200:
+                logger.error(f"Failed to fetch weather for {location}: HTTP {response.status}")
                 raise HTTPException(status_code=400, detail="Invalid location or API error")
             data = await response.json()
             # Match only the date part of dt_txt (e.g., "2025-06-19 12:00:00" -> "2025-06-19")
             forecast = next((item for item in data["list"] if item["dt_txt"].split(" ")[0] == date), None)
             if not forecast:
+                logger.warning(f"No weather data available for {location} on {date}")
                 raise HTTPException(status_code=404, detail="Weather data not available for date")
             
             weather_data = {
@@ -110,6 +129,7 @@ async def fetch_weather(location: str, date: str) -> dict:
                 "cloudiness": forecast["weather"][0]["description"]
             }
             weather_cache[cache_key] = {"data": weather_data, "timestamp": datetime.now()}
+            logger.info(f"Fetched and cached weather data for {location} on {date}")
             return weather_data
 
 # Weather scoring logic
@@ -143,11 +163,25 @@ def calculate_suitability(event_type: str, weather: dict) -> tuple[str, str]:
         if "clear" in weather["cloudiness"].lower():
             score += 15
             details.append("Clear skies for aesthetic appeal")
+    else:
+        # Generic scoring for other event types
+        if 15 <= weather["temperature"] <= 28:
+            score += 30
+            details.append("Comfortable temperature")
+        if weather["precipitation"] < 15:
+            score += 25
+            details.append("Low precipitation")
+        if weather["wind_speed"] < 15:
+            score += 20
+            details.append("Low wind speed")
+        if "clear" in weather["cloudiness"].lower():
+            score += 25
+            details.append("Clear skies")
     
     suitability = "Good" if score >= 70 else "Okay" if score >= 40 else "Poor"
     return suitability, "; ".join(details)
 
-# AI-powered suitability (optional feature)
+# AI-powered suitability
 def calculate_ai_suitability(weather: dict) -> str:
     features = np.array([[weather["temperature"], weather["precipitation"], weather["wind_speed"], 
                          1 if "cloudy" in weather["cloudiness"].lower() else 0]])
@@ -156,28 +190,30 @@ def calculate_ai_suitability(weather: dict) -> str:
 
 # Event Management Endpoints
 @app.post("/events", response_model=Event, status_code=status.HTTP_201_CREATED)
-async def create_event(event: EventCreate):
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        event_id = await conn.fetchval(
-            """
-            INSERT INTO events (name, location, date, event_type)
-            VALUES ($1, $2, $3, $4) RETURNING id
-            """,
-            event.name, event.location, event.date, event.event_type
-        )
-        return {**event.dict(), "id": event_id, "created_at": datetime.now()}
+async def create_event(event: EventCreate, pool=Depends(get_pool)):
+    try:
+        async with pool.acquire() as conn:
+            event_id = await conn.fetchval(
+                """
+                INSERT INTO events (name, location, date, event_type)
+                VALUES ($1, $2, $3, $4) RETURNING id
+                """,
+                event.name, event.location, event.date, event.event_type
+            )
+            logger.info(f"Created event with ID {event_id}: {event.name}")
+            return {**event.dict(), "id": event_id, "created_at": datetime.now()}
+    except Exception as e:
+        logger.error(f"Failed to create event: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error creating event: {str(e)}")
 
 @app.get("/events", response_model=List[Event])
-async def list_events():
-    pool = await get_db_pool()
+async def list_events(pool=Depends(get_pool)):
     async with pool.acquire() as conn:
         rows = await conn.fetch("SELECT * FROM events")
         return [Event(**row) for row in rows]
 
 @app.put("/events/{event_id}", response_model=Event)
-async def update_event(event_id: int, event: EventCreate):
-    pool = await get_db_pool()
+async def update_event(event_id: int, event: EventCreate, pool=Depends(get_pool)):
     async with pool.acquire() as conn:
         result = await conn.fetchval(
             """
@@ -187,7 +223,9 @@ async def update_event(event_id: int, event: EventCreate):
             event.name, event.location, event.date, event.event_type, event_id
         )
         if not result:
+            logger.warning(f"Event ID {event_id} not found for update")
             raise HTTPException(status_code=404, detail="Event not found")
+        logger.info(f"Updated event with ID {event_id}: {event.name}")
         return {**event.dict(), "id": event_id, "created_at": datetime.now()}
 
 # Weather Integration Endpoints
@@ -195,7 +233,7 @@ async def update_event(event_id: int, event: EventCreate):
 async def get_weather(location: str, date: str):
     try:
         weather = await fetch_weather(location, date)
-        suitability, details = calculate_suitability("cricket", weather)  # Default to cricket for simplicity
+        suitability, details = calculate_suitability("cricket", weather)
         return WeatherAnalysis(
             temperature=weather["temperature"],
             precipitation=weather["precipitation"],
@@ -205,14 +243,15 @@ async def get_weather(location: str, date: str):
             details=details
         )
     except ValueError:
+        logger.error(f"Invalid date format: {date}")
         raise HTTPException(status_code=400, detail="Invalid date format")
 
 @app.post("/events/{event_id}/weather-check", response_model=WeatherAnalysis)
-async def check_event_weather(event_id: int):
-    pool = await get_db_pool()
+async def check_event_weather(event_id: int, pool=Depends(get_pool)):
     async with pool.acquire() as conn:
         event = await conn.fetchrow("SELECT * FROM events WHERE id=$1", event_id)
         if not event:
+            logger.warning(f"Event ID {event_id} not found for weather check")
             raise HTTPException(status_code=404, detail="Event not found")
         event_date_str = event["date"].strftime("%Y-%m-%d")
         weather = await fetch_weather(event["location"], event_date_str)
@@ -227,11 +266,11 @@ async def check_event_weather(event_id: int):
         )
 
 @app.get("/events/{event_id}/suitability", response_model=WeatherAnalysis)
-async def get_event_suitability(event_id: int):
-    pool = await get_db_pool()
+async def get_event_suitability(event_id: int, pool=Depends(get_pool)):
     async with pool.acquire() as conn:
         event = await conn.fetchrow("SELECT * FROM events WHERE id=$1", event_id)
         if not event:
+            logger.warning(f"Event ID {event_id} not found for suitability check")
             raise HTTPException(status_code=404, detail="Event not found")
         event_date_str = event["date"].strftime("%Y-%m-%d")
         weather = await fetch_weather(event["location"], event_date_str)
@@ -247,16 +286,16 @@ async def get_event_suitability(event_id: int):
         )
 
 @app.get("/events/{event_id}/alternatives", response_model=List[AlternativeDate])
-async def get_alternative_dates(event_id: int):
-    pool = await get_db_pool()
+async def get_alternative_dates(event_id: int, pool=Depends(get_pool)):
     async with pool.acquire() as conn:
         event = await conn.fetchrow("SELECT * FROM events WHERE id=$1", event_id)
         if not event:
+            logger.warning(f"Event ID {event_id} not found for alternative dates")
             raise HTTPException(status_code=404, detail="Event not found")
         
         alternatives = []
         base_date = event["date"]
-        for i in range(1, 6):  # Check next 5 days
+        for i in range(1, 6):
             new_date = base_date + timedelta(days=i)
             new_date_str = new_date.strftime("%Y-%m-%d")
             try:
@@ -264,21 +303,26 @@ async def get_alternative_dates(event_id: int):
                 suitability, _ = calculate_suitability(event["event_type"], weather)
                 alternatives.append(AlternativeDate(date=new_date_str, suitability_score=suitability))
             except HTTPException as e:
-                if e.status_code == 404:  # Weather data not available
+                if e.status_code == 404:
                     alternatives.append(AlternativeDate(date=new_date_str, suitability_score="Unknown"))
                 else:
+                    logger.error(f"Error fetching alternative date weather: {str(e)}")
                     raise e
         return sorted(alternatives, key=lambda x: {"Good": 0, "Okay": 1, "Poor": 2, "Unknown": 3}[x.suitability_score])
 
-# Collaborative Planning (Optional Feature)
+# Collaborative Planning
 @app.post("/events/{event_id}/invite")
-async def invite_to_event(event_id: int, user_name: str, preferred_date: str):
-    pool = await get_db_pool()
+async def invite_to_event(event_id: int, user_name: str, preferred_date: str, pool=Depends(get_pool)):
     async with pool.acquire() as conn:
         event = await conn.fetchrow("SELECT * FROM events WHERE id=$1", event_id)
         if not event:
+            logger.warning(f"Event ID {event_id} not found for invite")
             raise HTTPException(status_code=404, detail="Event not found")
-        preferred_date_obj = datetime.strptime(preferred_date, "%Y-%m-%d").date()
+        try:
+            preferred_date_obj = datetime.strptime(preferred_date, "%Y-%m-%d").date()
+        except ValueError:
+            logger.error(f"Invalid date format for preferred_date: {preferred_date}")
+            raise HTTPException(status_code=400, detail="Invalid date format")
         try:
             await conn.execute(
                 """
@@ -287,16 +331,18 @@ async def invite_to_event(event_id: int, user_name: str, preferred_date: str):
                 """,
                 event_id, user_name, preferred_date_obj
             )
+            logger.info(f"User {user_name} voted for event ID {event_id} with date {preferred_date}")
+            return {"success": True, "message": f"Invite sent to {user_name}"}
         except asyncpg.exceptions.UniqueViolationError:
+            logger.warning(f"User {user_name} already voted for event ID {event_id}")
             raise HTTPException(status_code=400, detail=f"{user_name} has already voted for this event")
-        return {"success": True, "message": f"Invite sent to {user_name}"}
 
 @app.get("/events/{event_id}/votes")
-async def get_event_votes(event_id: int):
-    pool = await get_db_pool()
+async def get_event_votes(event_id: int, pool=Depends(get_pool)):
     async with pool.acquire() as conn:
         event = await conn.fetchrow("SELECT * FROM events WHERE id=$1", event_id)
         if not event:
+            logger.warning(f"Event ID {event_id} not found for votes")
             raise HTTPException(status_code=404, detail="Event not found")
         votes = await conn.fetch("SELECT user_name, preferred_date FROM event_votes WHERE event_id=$1", event_id)
         return [{"user_name": row["user_name"], "preferred_date": row["preferred_date"].strftime("%Y-%m-%d")} for row in votes]
